@@ -1,0 +1,5 @@
+{
+  "name": "Gemini FileInsight",
+  "description": "A Retrieval-Augmented Generation (RAG) system using Gemini 2.5 Flash. Upload text documents, code files, or data and ask questions to gain instant insights.",
+  "requestFramePermissions": []
+}
