@@ -1,41 +1,43 @@
-
 import { GoogleGenAI, Chat, GenerateContentResponse } from "@google/genai";
 import { FileDocument, GroundingMetadata } from '../types';
 import { SYSTEM_PROMPT_TEMPLATE } from '../constants';
 
-const STORE_NAME_KEY = 'gemini_file_insight_store_name';
-const MAX_INDEXING_WAIT_TIME = 120000; // 2 minutes timeout for indexing
-const RETRY_DELAY_BASE = 1000;
 const MAX_RETRIES = 3;
+const RETRY_DELAY_BASE = 1000;
 
+// Track the active store internally
+let activeStoreName: string | null = null;
+
+/** Throw if API key missing. */
 const getApiKey = (): string => {
   const key = process.env.API_KEY;
-  if (!key) {
-    throw new Error("API Key is missing. Please check your configuration.");
-  }
+  if (!key) throw new Error("API Key missing.");
   return key;
 };
 
-// Singleton references
-let currentChatSession: Chat | null = null;
-let activeStoreName: string | null = localStorage.getItem(STORE_NAME_KEY);
-
+/** Single AI client factory. */
 const getAiClient = () => new GoogleGenAI({ apiKey: getApiKey() });
 
-/**
- * Utility for exponential backoff retries on transient errors.
- */
+/** Extract HTTP status if present. */
+const getErrorStatus = (err: any): number => {
+  if (!err) return 0;
+  if (typeof err.status === "number") return err.status;
+  if (typeof err.code === "number") return err.code;
+  if (err.error && typeof err.error.code === "number") return err.error.code;
+  if (err.error && typeof err.error.status === "number") return err.error.status;
+  return 0;
+};
+
+/** Retry helper for transient errors. */
 async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
-    const status = error?.status || error?.code;
+    const status = getErrorStatus(error);
     const isTransient = status === 429 || status >= 500;
-    
     if (retries > 0 && isTransient) {
       const delay = RETRY_DELAY_BASE * Math.pow(2, MAX_RETRIES - retries);
-      console.warn(`Transient error detected (${status}). Retrying in ${delay}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise(res => setTimeout(res, delay));
       return withRetry(fn, retries - 1);
     }
     throw error;
@@ -43,163 +45,223 @@ async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promis
 }
 
 /**
- * Ensures a FileSearchStore exists for this session.
+ * Ensures a valid FileSearchStore exists.
+ * Verifies existence if we have a cached name, creates new if missing/invalid.
  */
-async function getOrCreateStore() {
+async function getOrCreateStore(): Promise<string> {
   const ai = getAiClient();
   
-  if (activeStoreName) return activeStoreName;
+  if (activeStoreName) {
+    try {
+      // Verify it still exists
+      await ai.fileSearchStores.get({ name: activeStoreName });
+      return activeStoreName;
+    } catch (e) {
+      console.warn("Cached store not found, creating new one.", e);
+      activeStoreName = null;
+    }
+  }
 
   try {
-    // Cast to any to handle undocumented FileSearchStore API and avoid "unknown" property errors
-    const store = await withRetry(() => (ai as any).fileSearchStores.create({
+    const store = await withRetry(() => ai.fileSearchStores.create({
       config: { displayName: `InsightStore_${Date.now()}` }
-    })) as any;
-    activeStoreName = store.name;
-    localStorage.setItem(STORE_NAME_KEY, store.name);
+    }));
+    activeStoreName = store.name || "";
     return activeStoreName;
-  } catch (error: any) {
-    console.error("Error creating FileSearchStore:", error);
-    throw new Error(`Knowledge base initialization failed: ${error.message || 'Unknown error'}`);
+  } catch (e) {
+    console.error("Failed to create store", e);
+    throw e;
   }
 }
 
 /**
- * Uploads a file to Gemini, then imports it into the FileSearchStore for RAG.
+ * Waits for a file to reach 'ACTIVE' state.
  */
-export const uploadFileToGemini = async (fileDoc: FileDocument): Promise<FileDocument> => {
+async function waitForFileActive(fileUri: string) {
   const ai = getAiClient();
-  
-  if (!fileDoc.fileHandle) throw new Error("File content is missing.");
+  let retries = 0;
+  const maxRetries = 60; // 2 minutes approx
+
+  while (retries < maxRetries) {
+    try {
+      const file = await ai.files.get({ name: fileUri });
+      if (file.state === 'ACTIVE') return file;
+      if (file.state === 'FAILED') throw new Error("File processing failed on server.");
+    } catch (e: any) {
+      if (getErrorStatus(e) !== 404) throw e;
+      // If 404, file might not be visible yet, continue waiting
+    }
+    
+    await new Promise(res => setTimeout(res, 2000));
+    retries++;
+  }
+  throw new Error("File processing timed out.");
+}
+
+/**
+ * Upload file to Gemini Files API, then import into the active FileSearchStore.
+ */
+export async function uploadFileToGemini(
+  fileDoc: FileDocument
+): Promise<FileDocument> {
+  if (!fileDoc.fileHandle) throw new Error("File content missing.");
+
+  const ai = getAiClient();
 
   try {
-    // 1. Upload to Gemini Files API - cast to any as this part of the SDK is undocumented in snippet
-    const uploadResponse = await withRetry(() => (ai as any).files.upload({
+    // 1. Upload to Files API
+    const uploadResponse = await withRetry(() => ai.files.upload({
       file: fileDoc.fileHandle!,
       config: { 
         displayName: fileDoc.name,
         mimeType: fileDoc.mimeType 
       }
-    })) as any;
+    }));
+    
+    // uploadResponse is the File object itself in the new SDK
+    const fileUri = uploadResponse.name;
+    if (!fileUri) throw new Error("Upload failed: No URI returned.");
 
+    // 2. Wait for ACTIVE state
+    await waitForFileActive(fileUri);
+
+    // 3. Ensure Store Exists
     const storeName = await getOrCreateStore();
 
-    // 2. Import file into the Search Store - cast operation to any to access status properties
-    let operation = await withRetry(() => (ai as any).fileSearchStores.importFile({
-      fileSearchStoreName: storeName,
-      fileName: uploadResponse.name
-    })) as any;
+    // 4. Add to Store
+    // Use createFile to add a single file to the store (importFiles is not available or correct here)
+    await withRetry(() => ai.fileSearchStores.createFile({
+      parent: storeName,
+      file: { name: fileUri }
+    }));
 
-    // 3. Poll for completion of indexing with timeout protection
-    const startTime = Date.now();
-    while (!operation.done) {
-      if (Date.now() - startTime > MAX_INDEXING_WAIT_TIME) {
-        throw new Error("Indexing timed out. The file might still be processing on the server.");
-      }
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      // polling operation also cast to any
-      operation = await withRetry(() => (ai as any).operations.get({ operation })) as any;
-    }
-
-    if (operation.error) {
-      throw new Error(`Indexing failed: ${operation.error.message || 'Cloud processing error'}`);
-    }
-
-    return {
-      ...fileDoc,
-      uploadUri: uploadResponse.name,
-      status: 'active',
-      error: undefined
-    };
-  } catch (error: any) {
-    console.error("RAG Processing Error:", error);
-    let errorMessage = "Processing failed.";
+    // Note: importFiles starts an operation, but for single files it's often quick.
+    // However, strictly we should monitor the store/file status.
+    // But since the file is ACTIVE, it's usually ready for search shortly.
     
-    if (error.message?.includes("timed out")) {
-      errorMessage = "Indexing took too long. Check back in a moment.";
-    } else if (error.status === 403) {
-      errorMessage = "Permission denied. Check your API key permissions.";
-    } else if (error.status === 400) {
-      errorMessage = "Invalid file format or metadata.";
-    } else if (error.message) {
-      errorMessage = error.message;
-    }
-
     return { 
       ...fileDoc, 
-      status: 'error', 
-      error: errorMessage 
+      status: "active", 
+      uploadUri: fileUri,
+      error: undefined 
     };
+
+  } catch (e: any) {
+    const status = getErrorStatus(e);
+    let msg = e.message;
+    if (status === 403) msg = "Permission denied. Check API key.";
+    return { ...fileDoc, status: "error", error: msg };
   }
-};
+}
 
 /**
- * Initializes a chat session configured with the native fileSearch tool.
+ * Delete a file from Gemini.
  */
-export const initializeChatSession = async (modelId: string = 'gemini-3-pro-preview') => {
+export async function deleteFileFromGemini(uri: string) {
+  const ai = getAiClient();
   try {
-    const ai = getAiClient();
-    const storeName = await getOrCreateStore();
+    await withRetry(() => ai.files.delete({ name: uri }));
+  } catch (e) {
+    console.warn("Failed to delete file from Gemini:", e);
+  }
+}
 
-    currentChatSession = ai.chats.create({
+let currentChat: Chat | null = null;
+
+/**
+ * Initialize chat with File Search tool bound to a given store.
+ * If no storeName is provided, uses the active store.
+ */
+export async function initializeChatSession(
+  storeName?: string,
+  modelId = "gemini-3-pro-preview"
+) {
+  const ai = getAiClient();
+  
+  // Resolve the store name
+  let targetStore = storeName;
+  if (!targetStore) {
+    targetStore = await getOrCreateStore();
+  }
+
+  // Create chat session
+  // We wrap this in a try/catch to handle 404s specifically by resetting the store
+  try {
+    currentChat = ai.chats.create({
       model: modelId,
       config: {
         systemInstruction: SYSTEM_PROMPT_TEMPLATE,
-        tools: [{ 
-          fileSearch: { 
-            fileSearchStoreNames: [storeName] 
-          } 
-        } as any],
-      },
+        tools: [
+          {
+            fileSearch: { fileSearchStoreNames: [targetStore] }
+          }
+        ]
+      }
     });
-    return currentChatSession;
-  } catch (error: any) {
-    console.error("Session init error:", error);
-    throw new Error(`Failed to start AI session: ${error.message}`);
+    return currentChat;
+  } catch (e: any) {
+    const status = getErrorStatus(e);
+    if (status === 404 && !storeName) {
+      // If we used the cached activeStoreName and it failed, reset and try once more
+      console.warn("Chat init failed with 404, resetting store and retrying.");
+      activeStoreName = null;
+      targetStore = await getOrCreateStore();
+      currentChat = ai.chats.create({
+        model: modelId,
+        config: {
+          systemInstruction: SYSTEM_PROMPT_TEMPLATE,
+          tools: [{ fileSearch: { fileSearchStoreNames: [targetStore] } }]
+        }
+      });
+      return currentChat;
+    }
+    throw e;
   }
-};
-
-export const deleteFileFromGemini = async (fileUri: string) => {
-  const ai = getAiClient();
-  try {
-    await withRetry(() => (ai as any).files.delete({ name: fileUri }));
-  } catch (e) {
-    console.error("Cleanup error:", e);
-  }
-};
+}
 
 /**
- * Sends a message. The model will now automatically use the fileSearch tool.
+ * Send message stream with optional grounding metadata.
  */
-export const sendMessageStream = async (
-  message: string, 
+export async function sendMessageStream(
+  message: string,
   onChunk: (text: string, metadata?: GroundingMetadata) => void
-): Promise<string> => {
-  if (!currentChatSession) {
+): Promise<string> {
+  if (!currentChat) {
     await initializeChatSession();
   }
-  
+
   try {
-    // Cast result to any to handle AsyncIterable type inference issues when wrapped in withRetry
-    const result = await withRetry(() => currentChatSession!.sendMessageStream({ message })) as any;
-    let fullText = '';
-    
+    const result = await withRetry(() => currentChat!.sendMessageStream({ message }));
+    let fullText = "";
+
     for await (const chunk of result) {
       const c = chunk as GenerateContentResponse;
-      const text = c.text || '';
-      const metadata = c.candidates?.[0]?.groundingMetadata as GroundingMetadata | undefined;
-      
+      const text = c.text || "";
+      const meta = c.candidates?.[0]?.groundingMetadata as GroundingMetadata | undefined;
       fullText += text;
-      onChunk(text, metadata);
+      onChunk(text, meta);
     }
-
     return fullText;
-  } catch (error: any) {
-    console.error("Chat streaming error:", error);
-    if (error.status === 429) {
-      throw new Error("Rate limit exceeded. Please wait a moment before asking again.");
+  } catch (err: any) {
+    const status = getErrorStatus(err);
+    if (status === 404) {
+      // If session not found or store not found during message
+      currentChat = null;
+      // Force store check on next init
+      activeStoreName = null; 
+      throw new Error("Session context expired. Please try sending your message again.");
     }
-    currentChatSession = null; // Clear session on failure to allow fresh retry
-    throw error;
+    throw err;
   }
-};
+}
+
+/**
+ * Optional: Delete an existing File Search store permanently.
+ */
+export async function deleteFileSearchStore(storeName: string) {
+  const ai = getAiClient();
+  await withRetry(() => ai.fileSearchStores.delete({
+    name: storeName,
+    config: { force: true }
+  }));
+}

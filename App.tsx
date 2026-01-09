@@ -1,8 +1,8 @@
-
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
-  Menu, Trash2, Send, MessageSquare, X, Database, Search, 
-  Loader2, Globe, AlertCircle, CheckCircle2, Eraser, Info
+  Menu, Trash2, MessageSquare, X, Database, Search, 
+  Loader2, AlertCircle, CheckCircle2, Eraser, ArrowRight, 
+  Sparkles
 } from 'lucide-react';
 import { FileDocument, ChatMessage, MessageRole } from './types';
 import { FileUploader } from './components/FileUploader';
@@ -67,11 +67,10 @@ const App: React.FC = () => {
   }, [inputValue]);
 
   const handleAddFiles = useCallback(async (newFiles: FileDocument[]) => {
-    // Set initial uploading status
     const uploadingFiles = newFiles.map(f => ({ ...f, status: 'uploading' as const }));
     setFiles(prev => [...prev, ...uploadingFiles]);
     
-    // Process each file (Upload + Store Import)
+    // Upload sequentially to ensure stable store creation
     for (const fileDoc of newFiles) {
       try {
         const result = await uploadFileToGemini(fileDoc);
@@ -110,6 +109,7 @@ const App: React.FC = () => {
     if (fileToRemove.uploadUri) {
       try {
         await deleteFileFromGemini(fileToRemove.uploadUri);
+        // Refresh session to clear context of deleted file
         await initializeChatSession();
       } catch (e) {
         console.error("Failed to clean up remote file", e);
@@ -176,64 +176,72 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900">
+    <div className="flex h-screen bg-[#f8fafc] overflow-hidden text-slate-900 font-sans">
+      {/* Sidebar */}
       <aside 
-        aria-label="Knowledge Base"
-        className={`${isSidebarOpen ? 'w-80' : 'w-0'} bg-white border-r border-slate-200 transition-all duration-300 ease-in-out flex flex-col relative flex-shrink-0 z-20`}
+        className={`${isSidebarOpen ? 'w-[320px]' : 'w-0'} bg-white border-r border-slate-200/60 transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1) flex flex-col relative flex-shrink-0 z-20 shadow-xl shadow-slate-200/50`}
       >
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between overflow-hidden">
-          <div className="flex items-center gap-2">
-            <div className="bg-indigo-600 p-1.5 rounded-lg shrink-0">
+        <div className="h-16 px-5 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-tr from-indigo-600 to-violet-600 p-2 rounded-xl shadow-lg shadow-indigo-500/20">
               <Database className="w-5 h-5 text-white" />
             </div>
-            <h1 className="font-bold text-slate-800 text-lg tracking-tight truncate">FileInsight</h1>
+            <h1 className="font-bold text-slate-800 text-lg tracking-tight">FileInsight</h1>
           </div>
           <button 
             onClick={() => setIsSidebarOpen(false)} 
-            className="p-1.5 hover:bg-slate-100 rounded-md lg:hidden text-slate-500"
-            aria-label="Close Sidebar"
+            className="p-2 hover:bg-slate-50 rounded-lg lg:hidden text-slate-400 hover:text-slate-600 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-4 flex-1 overflow-y-auto">
-          <section className="mb-6">
-            <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 px-1">Source Materials</h2>
+        <div className="flex-1 overflow-y-auto px-5 py-6">
+          <section className="mb-8">
+            <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Sparkles className="w-3 h-3 text-indigo-500" />
+              Upload Source
+            </h2>
             <FileUploader onFilesAdded={handleAddFiles} />
           </section>
 
-          <nav aria-label="Document List" className="space-y-2">
+          <nav className="space-y-3">
+            <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-3 px-1">
+              Indexed Knowledge
+            </h2>
              {files.length === 0 && (
-               <div className="text-center text-slate-400 py-10 px-4 text-xs italic">
-                 No documents uploaded yet.
+               <div className="text-center py-8 px-4 rounded-2xl bg-slate-50 border border-dashed border-slate-200">
+                 <p className="text-xs text-slate-500 font-medium">No documents yet</p>
+                 <p className="text-[10px] text-slate-400 mt-1">Upload to start analysis</p>
                </div>
              )}
              {files.map(file => (
                <div key={file.id} className="group relative">
                  <div 
-                    className={`w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
+                    className={`w-full flex items-start gap-3 p-3.5 rounded-2xl border text-left transition-all duration-200 ${
                       activeFileId === file.id 
-                        ? 'bg-indigo-50 border-indigo-200 shadow-sm ring-1 ring-indigo-200' 
-                        : 'bg-white border-slate-200 hover:border-indigo-300'
-                    } ${file.status === 'error' ? 'border-red-100 bg-red-50/30' : ''}`}
+                        ? 'bg-indigo-50/50 border-indigo-200 shadow-sm ring-1 ring-indigo-500/10' 
+                        : 'bg-white border-slate-100 hover:border-indigo-200 hover:shadow-sm'
+                    } ${file.status === 'error' ? 'border-red-100 bg-red-50/20' : ''}`}
                  >
                    <button 
                       onClick={() => setActiveFileId(file.id === activeFileId ? null : file.id)}
                       className="relative shrink-0 mt-0.5 focus:outline-none"
                     >
-                      <FileIcon fileName={file.name} />
-                      <div className="absolute -bottom-1 -right-1 bg-white rounded-full">
-                        {file.status === 'active' && <CheckCircle2 className="w-3 h-3 text-green-500" />}
-                        {(file.status === 'uploading' || file.status === 'processing' || file.status === 'pending') && <Loader2 className="w-3 h-3 text-indigo-500 animate-spin" />}
-                        {file.status === 'error' && <AlertCircle className="w-3 h-3 text-red-500" />}
+                      <FileIcon fileName={file.name} className="w-9 h-9" />
+                      <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 shadow-sm">
+                        {file.status === 'active' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 fill-white" />}
+                        {(file.status === 'uploading' || file.status === 'processing' || file.status === 'pending') && <Loader2 className="w-3.5 h-3.5 text-indigo-500 animate-spin" />}
+                        {file.status === 'error' && <AlertCircle className="w-3.5 h-3.5 text-red-500" />}
                       </div>
                    </button>
                    
-                   <div className="flex flex-col min-w-0 flex-1">
+                   <div className="flex flex-col min-w-0 flex-1 gap-0.5">
                       <button 
                         onClick={() => setActiveFileId(file.id === activeFileId ? null : file.id)}
-                        className={`text-sm font-semibold truncate text-left focus:outline-none ${activeFileId === file.id ? 'text-indigo-900' : 'text-slate-700'}`}
+                        className={`text-sm font-semibold truncate text-left focus:outline-none transition-colors ${
+                          activeFileId === file.id ? 'text-indigo-900' : 'text-slate-700 hover:text-indigo-700'
+                        }`}
                       >
                         {file.name}
                       </button>
@@ -241,9 +249,8 @@ const App: React.FC = () => {
                         <span className="text-[10px] text-slate-400 font-medium">{(file.size / 1024).toFixed(1)} KB</span>
                         {file.status === 'error' && (
                           <span className="text-[9px] text-red-600 font-bold uppercase flex items-center gap-1 group/err relative cursor-help">
-                            <Info className="w-2.5 h-2.5" />
-                            Failed
-                            <span className="absolute left-0 bottom-full mb-1 w-48 p-2 bg-slate-900 text-white text-[10px] normal-case rounded-lg opacity-0 group-hover/err:opacity-100 transition-opacity z-50 pointer-events-none shadow-xl">
+                            Error
+                            <span className="absolute left-0 bottom-full mb-2 w-48 p-2 bg-slate-800 text-white text-[10px] normal-case rounded-lg opacity-0 group-hover/err:opacity-100 transition-opacity z-50 pointer-events-none shadow-xl">
                               {file.error || "Unknown indexing error"}
                             </span>
                           </span>
@@ -252,27 +259,27 @@ const App: React.FC = () => {
                    </div>
 
                    {confirmDeleteId === file.id ? (
-                     <div className="absolute inset-0 z-10 bg-white/95 rounded-xl flex items-center justify-center p-2 border border-red-200 shadow-sm">
+                     <div className="absolute inset-0 z-10 bg-white/95 backdrop-blur-sm rounded-2xl flex items-center justify-center p-2 border border-red-100 shadow-sm animate-fadeIn">
                         <button 
                           onClick={() => removeFile(file.id)}
-                          className="text-[10px] font-bold text-red-600 px-2 py-1 hover:bg-red-50 rounded uppercase"
+                          className="text-[10px] font-bold text-white bg-red-500 px-3 py-1.5 hover:bg-red-600 rounded-lg shadow-sm transition-colors"
                         >
                           Delete
                         </button>
                         <button 
                           onClick={() => setConfirmDeleteId(null)}
-                          className="text-[10px] font-bold text-slate-400 px-2 py-1 hover:bg-slate-50 rounded uppercase ml-2"
+                          className="text-[10px] font-bold text-slate-500 px-3 py-1.5 hover:bg-slate-100 rounded-lg ml-1 transition-colors"
                         >
-                          Back
+                          Cancel
                         </button>
                      </div>
                    ) : (
                      <button 
                         onClick={() => setConfirmDeleteId(file.id)}
-                        className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                        aria-label={`Remove ${file.name}`}
+                        className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all focus:opacity-100"
+                        title="Remove file"
                       >
-                       <Trash2 className="w-3.5 h-3.5" />
+                       <Trash2 className="w-4 h-4" />
                      </button>
                    )}
                  </div>
@@ -281,137 +288,188 @@ const App: React.FC = () => {
           </nav>
         </div>
         
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50">
-           <div className="flex items-center gap-2 justify-center text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-             <Globe className="w-3 h-3" />
-             <span>AI Grounding System</span>
+        <div className="p-4 border-t border-slate-100 bg-slate-50/30 backdrop-blur-sm">
+           <div className="flex items-center gap-2 justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+             <span>System Online</span>
            </div>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col h-full min-w-0 relative">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 shadow-sm z-10 shrink-0">
-          <div className="flex items-center gap-3 overflow-hidden">
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col h-full min-w-0 relative bg-white/50">
+        {/* Header */}
+        <header className="h-16 border-b border-slate-200/50 flex items-center justify-between px-6 sticky top-0 z-30 glass">
+          <div className="flex items-center gap-4 overflow-hidden">
             {!isSidebarOpen && (
               <button 
                 onClick={() => setIsSidebarOpen(true)} 
-                className="p-2 hover:bg-slate-100 rounded-lg text-slate-500"
-                aria-label="Open Sidebar"
+                className="p-2 -ml-2 hover:bg-white rounded-xl text-slate-500 shadow-sm border border-transparent hover:border-slate-200 transition-all"
+                title="Expand Sidebar"
               >
                 <Menu className="w-5 h-5" />
               </button>
             )}
-            <h2 className="font-bold text-slate-800 flex items-center gap-2 truncate">
+            <h2 className="font-bold text-slate-800 flex items-center gap-3 truncate">
               {activeFile ? (
-                <>
-                  <span className="text-slate-300 font-medium hidden sm:inline">Source:</span> 
-                  <span className="text-indigo-600 truncate">{activeFile.name}</span>
-                </>
+                <div className="flex items-center gap-2 text-sm bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                  <span className="text-slate-400 font-medium uppercase text-[10px] tracking-wider">Preview</span> 
+                  <span className="text-slate-300">|</span>
+                  <span className="text-indigo-600 truncate max-w-[200px]">{activeFile.name}</span>
+                </div>
               ) : (
-                <>
-                  <MessageSquare className="w-4 h-4 text-slate-400" />
-                  <span className="truncate">RAG Analysis Terminal</span>
-                </>
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-indigo-500" />
+                  <span className="bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600">Contextual Analysis Terminal</span>
+                </div>
               )}
             </h2>
           </div>
           
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
               <button 
                 onClick={clearChat}
-                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                title="Clear Chat"
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-200 hover:shadow-sm"
+                title="Clear Chat History"
               >
                 <Eraser className="w-4 h-4" />
               </button>
-              <span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase tracking-widest ${isSyncing ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>
-                {isSyncing ? 'Syncing Store...' : `${activeCount} Indexed`}
-              </span>
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-bold uppercase tracking-widest transition-all ${
+                isSyncing 
+                  ? 'bg-indigo-50 text-indigo-700 border-indigo-100' 
+                  : activeCount > 0 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                    : 'bg-slate-50 text-slate-500 border-slate-100'
+              }`}>
+                {isSyncing ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Syncing Index...</span>
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-3 h-3" />
+                    <span>{activeCount} Sources Active</span>
+                  </>
+                )}
+              </div>
           </div>
         </header>
 
         <div className="flex-1 flex overflow-hidden relative">
+           {/* Document Preview Pane */}
            {activeFile && (
               <section 
-                aria-label="Document Preview"
-                className="flex-1 bg-white overflow-auto border-r border-slate-200 p-8 max-w-2xl hidden lg:block animate-slideInRight"
+                className="flex-1 bg-white overflow-hidden border-r border-slate-200/60 max-w-2xl hidden lg:flex flex-col animate-slideInRight shadow-[inset_-10px_0_20px_-10px_rgba(0,0,0,0.02)]"
               >
-                 <div className="prose prose-slate prose-sm max-w-none">
-                    <div className="relative">
-                      <div className="absolute top-0 right-0 text-[10px] font-mono text-slate-300 uppercase tracking-widest pointer-events-none">
-                        Content Preview
+                 <div className="p-4 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Source Content</span>
+                    <button 
+                      onClick={() => setActiveFileId(null)}
+                      className="p-1 hover:bg-slate-200 rounded text-slate-400"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                 </div>
+                 <div className="flex-1 overflow-auto p-6 custom-scrollbar">
+                    {activeFile.content ? (
+                      <pre className="text-xs font-mono leading-relaxed text-slate-600 whitespace-pre-wrap">
+                        {activeFile.content}
+                      </pre>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                        <Loader2 className="w-8 h-8 animate-spin mb-3 text-indigo-200" />
+                        <span className="text-xs font-medium uppercase tracking-widest">Loading Preview...</span>
                       </div>
-                      {activeFile.content ? (
-                        <pre className="text-xs bg-slate-50 p-6 rounded-2xl border border-slate-100 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed shadow-inner">
-                          {activeFile.content}
-                        </pre>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center h-40 text-slate-400 animate-pulse bg-slate-50 rounded-2xl border border-slate-100">
-                          <Loader2 className="w-6 h-6 animate-spin mb-2" />
-                          <span className="text-xs font-medium uppercase tracking-widest">Loading Preview</span>
-                        </div>
-                      )}
-                    </div>
+                    )}
                  </div>
               </section>
            )}
 
+           {/* Chat Area */}
            <section 
-             aria-label="Chat Conversation"
-             className={`flex-1 flex flex-col bg-slate-50 relative transition-all duration-300 ${activeFile ? 'lg:max-w-[50%]' : ''}`}
+             className={`flex-1 flex flex-col relative transition-all duration-300 ${activeFile ? 'lg:max-w-[50%]' : ''}`}
            >
-             <div className="flex-1 overflow-y-auto p-4 lg:p-10 scroll-smooth">
+             {/* Messages */}
+             <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth" id="chat-container">
                 {messages.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center animate-fadeIn max-w-sm mx-auto">
-                    <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mb-6 ring-1 ring-slate-100">
+                  <div className="h-full flex flex-col items-center justify-center text-center animate-fadeIn px-4">
+                    <div className="w-20 h-20 bg-gradient-to-tr from-white to-slate-50 rounded-3xl shadow-xl shadow-indigo-100 flex items-center justify-center mb-8 ring-1 ring-slate-100 transform rotate-3 transition-transform hover:rotate-0 duration-500">
                        <Search className="w-8 h-8 text-indigo-500" />
                     </div>
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">Knowledge Query</h3>
-                    <p className="text-slate-500 text-sm leading-relaxed">
+                    <h3 className="text-2xl font-bold text-slate-800 mb-3 tracking-tight">Knowledge Retrieval</h3>
+                    <p className="text-slate-500 text-sm leading-relaxed max-w-sm mb-8">
                       {files.length === 0 
-                        ? "Upload and index documents to start your semantic search analysis." 
+                        ? "Upload documents to the sidebar to construct your personal knowledge base." 
                         : activeCount === 0 
-                          ? "Documents are still indexing or failed to process. Please wait for the green checkmark."
-                          : "Ask questions based on your indexed store. Gemini will retrieve relevant fragments automatically."}
+                          ? "Processing your documents. The neural index will be ready shortly."
+                          : "Your knowledge base is active. Ask complex questions to synthesize information across files."}
                     </p>
+                    {files.length === 0 && (
+                      <div className="flex gap-2 text-[10px] font-mono text-slate-400 bg-slate-100/50 px-4 py-2 rounded-full border border-slate-200/50">
+                        <span>.PDF</span>
+                        <span>.CSV</span>
+                        <span>.JSON</span>
+                        <span>.MD</span>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <div className="space-y-8 max-w-3xl mx-auto w-full">
+                  <div className="max-w-3xl mx-auto w-full space-y-8 pb-4">
                     {messages.map(msg => <ChatMessageBubble key={msg.id} message={msg} />)}
+                    {isProcessing && (
+                      <div className="flex justify-start animate-fadeIn">
+                        <div className="bg-white border border-slate-100 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm flex items-center gap-3">
+                           <div className="flex space-x-1">
+                              <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                              <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                              <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                           </div>
+                           <span className="text-xs font-medium text-slate-400">Analyzing...</span>
+                        </div>
+                      </div>
+                    )}
                     <div ref={messagesEndRef} />
                   </div>
                 )}
              </div>
 
-             <div className="p-4 bg-white border-t border-slate-200 shadow-2xl z-10">
-               <div className="max-w-3xl mx-auto w-full relative group">
-                 <textarea
-                    ref={textareaRef}
-                    value={inputValue}
-                    onChange={handleInput}
-                    onKeyDown={handleKeyDown}
-                    placeholder={files.length === 0 ? "Upload files to initialize index..." : "Ask your documents..."}
-                    className="w-full pl-5 pr-14 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all resize-none shadow-sm text-sm font-medium leading-relaxed placeholder:text-slate-400 disabled:opacity-50"
-                    rows={1}
-                    disabled={isProcessing || isSyncing}
-                    aria-label="User Message"
-                 />
-                 <button 
-                   onClick={handleSendMessage}
-                   disabled={!inputValue.trim() || isProcessing || isSyncing || activeCount === 0}
-                   className={`absolute right-2.5 bottom-2.5 p-2.5 rounded-xl transition-all shadow-sm ${
-                     !inputValue.trim() || isProcessing || isSyncing || activeCount === 0
-                        ? 'text-slate-300' 
-                        : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'
-                   }`}
-                   aria-label="Send Message"
-                 >
-                   {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-                 </button>
-               </div>
-               <div className="max-w-3xl mx-auto w-full mt-2 px-1 flex justify-between items-center opacity-40">
-                  <span className="text-[9px] font-bold uppercase tracking-widest">Shift + Enter for multiline</span>
-                  {activeCount > 0 && <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-600">Native Vector RAG Enabled</span>}
+             {/* Input Area - Floating */}
+             <div className="p-4 md:p-6 sticky bottom-0 z-20 pointer-events-none">
+               <div className="max-w-3xl mx-auto w-full pointer-events-auto">
+                 <div className="relative group bg-white rounded-[24px] shadow-2xl shadow-indigo-900/5 border border-slate-200 focus-within:border-indigo-500/50 focus-within:ring-4 focus-within:ring-indigo-500/10 transition-all duration-300">
+                   <textarea
+                      ref={textareaRef}
+                      value={inputValue}
+                      onChange={handleInput}
+                      onKeyDown={handleKeyDown}
+                      placeholder={files.length === 0 ? "Waiting for documents..." : "Ask a question about your files..."}
+                      className="w-full pl-6 pr-16 py-4 bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-sm md:text-base font-medium text-slate-700 placeholder:text-slate-400 max-h-[200px] overflow-y-auto"
+                      rows={1}
+                      disabled={isProcessing || isSyncing}
+                      style={{ minHeight: '60px' }}
+                   />
+                   
+                   <div className="absolute right-2 bottom-2">
+                     <button 
+                       onClick={handleSendMessage}
+                       disabled={!inputValue.trim() || isProcessing || isSyncing || activeCount === 0}
+                       className={`p-2.5 rounded-xl transition-all duration-200 flex items-center justify-center ${
+                         !inputValue.trim() || isProcessing || isSyncing || activeCount === 0
+                            ? 'bg-slate-100 text-slate-300 cursor-not-allowed' 
+                            : 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 hover:scale-105 active:scale-95'
+                       }`}
+                     >
+                       {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
+                     </button>
+                   </div>
+                 </div>
+                 
+                 <div className="mt-3 text-center opacity-60 transition-opacity hover:opacity-100">
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      Gemini 2.5 Flash • {activeCount} Documents Active • <span className="hidden sm:inline">Shift + Enter for new line</span>
+                    </span>
+                 </div>
                </div>
              </div>
            </section>

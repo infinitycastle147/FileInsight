@@ -26,8 +26,10 @@ export interface GroundingMetadata {
       uri: string;
       title: string;
     };
+    [key: string]: any;
   }>;
   webSearchQueries?: string[];
+  [key: string]: any;
 }
 
 export interface ChatMessage {

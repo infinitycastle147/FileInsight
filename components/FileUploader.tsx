@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { UploadCloud } from 'lucide-react';
+import { UploadCloud, FilePlus } from 'lucide-react';
 import { SUPPORTED_EXTENSIONS, MAX_FILE_SIZE, MIME_TYPE_MAP } from '../constants';
 import { FileDocument } from '../types';
 
@@ -56,7 +56,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesAdded }) => {
     handleFiles(e.dataTransfer.files);
   }, []);
 
-  const onDragOver = useCallback((e: React.DragOverEvent) => {
+  const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
@@ -73,11 +73,11 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesAdded }) => {
       onDrop={onDrop}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
-      className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer group relative ${
-        isDragging 
-          ? 'border-indigo-500 bg-indigo-50/50 scale-[1.02] ring-4 ring-indigo-500/10' 
-          : 'border-slate-200 hover:border-indigo-400 hover:bg-slate-50'
-      }`}
+      className={`relative group overflow-hidden rounded-2xl border-2 border-dashed transition-all duration-300 ease-out cursor-pointer
+        ${isDragging 
+          ? 'border-indigo-500 bg-indigo-50 scale-[1.01] shadow-lg' 
+          : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50/50 hover:shadow-sm'
+        }`}
     >
       <input 
         type="file" 
@@ -89,15 +89,23 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFilesAdded }) => {
       />
       <label 
         htmlFor="fileInput" 
-        className="cursor-pointer flex flex-col items-center focus-within:ring-2 focus-within:ring-indigo-500 outline-none"
+        className="flex flex-col items-center justify-center p-8 w-full h-full cursor-pointer z-10 relative"
       >
-        <div className={`p-2.5 rounded-xl mb-3 transition-all ${
-          isDragging ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-600 group-hover:bg-indigo-200'
+        <div className={`p-3 rounded-full mb-3 transition-all duration-300 shadow-sm ${
+          isDragging 
+            ? 'bg-indigo-600 text-white ring-4 ring-indigo-200' 
+            : 'bg-white text-indigo-600 border border-slate-100 group-hover:scale-110 group-hover:border-indigo-100 group-hover:text-indigo-700'
         }`}>
-          <UploadCloud className="w-5 h-5" />
+          {isDragging ? <FilePlus className="w-6 h-6" /> : <UploadCloud className="w-6 h-6" />}
         </div>
-        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-tight">Upload Documents</h3>
-        <p className="text-[10px] font-medium text-slate-400 mt-1 uppercase tracking-widest">CSV, PDF, JSON, MD (MAX 25MB)</p>
+        <div className="space-y-1 text-center">
+          <h3 className={`text-sm font-semibold transition-colors ${isDragging ? 'text-indigo-900' : 'text-slate-700 group-hover:text-indigo-800'}`}>
+            {isDragging ? 'Drop to Upload' : 'Click or Drag Documents'}
+          </h3>
+          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">
+            Up to 25MB per file
+          </p>
+        </div>
       </label>
     </div>
   );
